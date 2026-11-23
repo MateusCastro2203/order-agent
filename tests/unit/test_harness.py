@@ -217,3 +217,18 @@ def test_encerrar_sem_concluir_duas_vezes_e_no_progress():
     result = run(harness, RELEASE_REQUEST, OPERATOR)
     assert (result.outcome, result.reason) == (Outcome.ABORTED, Reason.NO_PROGRESS)
     assert system.release_effects == 0
+
+
+@pytest.mark.parametrize(
+    ("order_id", "reason"),
+    [
+        (fixtures.ORDER_CANCELLED, Reason.BLOCKED_ORDER_STATUS),
+        (fixtures.ALREADY_SHIPPED, Reason.ALREADY_RELEASED),
+    ],
+)
+def test_parar_depois_de_ler_so_o_pedido_explica_o_bloqueio(order_id, reason):
+    # Achado do runner com o LLM real: o modelo lê o pedido, vê CANCELLED e encerra.
+    harness, system = agent([call(ToolName.GET_ORDER, order_id, Intent.RELEASE), finish()])
+    result = run(harness, f"Libera o envio do pedido {order_id}", OPERATOR)
+    assert (result.outcome, result.reason) == (Outcome.BLOCKED, reason)
+    assert system.release_effects == 0

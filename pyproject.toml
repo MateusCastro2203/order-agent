@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 order-agent = "order_agent.cli:main"
+order-agent-evals = "order_agent.evalrunner:main"
 
 [dependency-groups]
 dev = [

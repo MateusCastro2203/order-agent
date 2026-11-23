@@ -31,6 +31,15 @@ class Decision(BaseModel):
 ALLOW = Decision(allowed=True)
 
 
+def order_blocker(order: Order) -> Reason | None:
+    """Motivo pelo qual o pedido, sozinho, já impede o release (sem olhar o pagamento)."""
+    if order.status is OrderStatus.SHIPPED:
+        return Reason.ALREADY_RELEASED
+    if order.status is not OrderStatus.READY:
+        return Reason.BLOCKED_ORDER_STATUS
+    return None
+
+
 def evaluate_release(
     *,
     context: RunContext,
@@ -45,10 +54,8 @@ def evaluate_release(
         return Decision(allowed=False, reason=Reason.UNAUTHORIZED)
     if payment.order_id != order.order_id:
         return Decision(allowed=False, reason=Reason.BLOCKED_PAYMENT)
-    if order.status is OrderStatus.SHIPPED:
-        return Decision(allowed=False, reason=Reason.ALREADY_RELEASED)
-    if order.status is not OrderStatus.READY:
-        return Decision(allowed=False, reason=Reason.BLOCKED_ORDER_STATUS)
+    if reason := order_blocker(order):
+        return Decision(allowed=False, reason=reason)
     if payment.status is not PaymentStatus.CONFIRMED:
         return Decision(allowed=False, reason=Reason.BLOCKED_PAYMENT)
     return ALLOW

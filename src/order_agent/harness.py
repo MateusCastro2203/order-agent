@@ -36,7 +36,7 @@ from order_agent.models import (
     ToolResult,
 )
 from order_agent.planner.base import Planner, PlannerError, PlannerInput
-from order_agent.policy import evaluate_release
+from order_agent.policy import evaluate_release, order_blocker
 from order_agent.tools.registry import execute
 from order_agent.tools.system import FakeOrderSystem
 
@@ -211,6 +211,9 @@ class Harness:
             decision = self._decide(s, order, payment, intent)
             if not decision.allowed:
                 return stop(Outcome.BLOCKED, decision.reason)
+        elif order and (reason := order_blocker(order)):
+            # Parou depois de ler só o pedido: o status já basta para negar (ex.: CANCELLED).
+            return stop(Outcome.BLOCKED, reason)
         return stop(Outcome.ABORTED, Reason.NO_PROGRESS, detail="planner encerrou sem concluir")
 
     def _decide(self, s: AgentState, order: Order, payment: Payment, intent: Intent):

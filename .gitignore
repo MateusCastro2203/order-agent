@@ -18,3 +18,6 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+
+# Saída do runner de métricas
+reports/
