@@ -39,8 +39,8 @@ def render(s: AgentState) -> str:
     match outcome:
         case Outcome.RELEASED if s.get("evidence"):
             return (
-                f"Envio do pedido {ref} liberado. A resposta da liberação não chegou, "
-                f"mas a consulta seguinte confirmou o pedido como SHIPPED."
+                f"Envio do pedido {ref} liberado. A resposta da liberação não chegou; "
+                f"evidência: {s['evidence']}."
             )
         case Outcome.RELEASED:
             return f"Envio do pedido {ref} liberado (liberação {s.get('release_id')})."

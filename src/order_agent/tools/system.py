@@ -49,6 +49,7 @@ class Fault:
     apply_effect: bool = False
     payload: dict[str, Any] | None = None
     block: threading.Event | None = None
+    skip: int = 0  # chamadas que passam normalmente antes da falha começar
 
 
 @dataclass
@@ -105,6 +106,9 @@ class FakeOrderSystem:
             if not queue:
                 return None
             fault = queue[0]
+            if fault.skip > 0:
+                fault.skip -= 1
+                return None
             fault.times -= 1
             if fault.times <= 0:
                 queue.pop(0)

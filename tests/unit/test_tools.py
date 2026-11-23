@@ -1,5 +1,3 @@
-import threading
-
 import pytest
 
 from order_agent.models import OrderStatus, ToolCall, ToolErrorKind, ToolName
@@ -73,8 +71,7 @@ def test_release_sem_release_id_vira_invalid_output(system):
     assert result.error is ToolErrorKind.INVALID_OUTPUT
 
 
-def test_timeout_real_do_executor_sem_sleep(system):
-    gate = threading.Event()
+def test_timeout_real_do_executor_sem_sleep(system, gate):
     system.inject(ToolName.GET_ORDER, Fault(ToolErrorKind.TIMEOUT, block=gate))
     result = execute(system, call(ToolName.GET_ORDER), timeout_s=0.01)
     gate.set()

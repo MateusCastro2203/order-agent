@@ -16,6 +16,7 @@ from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
+from langgraph.types import interrupt
 from pydantic import ValidationError
 
 from order_agent.intent import detect_intent
@@ -45,6 +46,8 @@ RETRYABLE_READ_ERRORS = frozenset(
 )
 DEFINITIVE_RELEASE_ERRORS = frozenset({ToolErrorKind.REJECTED, ToolErrorKind.NOT_FOUND})
 
+OPERATOR_DECISIONS = ("released", "not_released")
+
 _PLANNER_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="planner")
 
 
@@ -55,6 +58,9 @@ class HarnessConfig:
     tool_timeout_s: float = 2.0
     llm_timeout_s: float = 20.0
     total_timeout_s: float = 90.0
+    # Pausa com interrupt() no release incerto e espera a decisão de um operador. Exige
+    # checkpointer; hoje só os testes ligam (MemorySaver). O CLI encerra com UNKNOWN.
+    pause_on_uncertain: bool = False
 
     @classmethod
     def from_env(cls) -> HarnessConfig:
@@ -311,4 +317,23 @@ class Harness:
         return {"trace": trace}
 
     def node_escalate(self, s: AgentState) -> dict[str, Any]:
-        return stop(Outcome.UNKNOWN, detail=s.get("detail") or "resultado do release incerto")
+        detail = s.get("detail") or "resultado do release incerto"
+        if not self.config.pause_on_uncertain:
+            return stop(Outcome.UNKNOWN, detail=detail)
+
+        order = s["order"]
+        decision = interrupt(
+            {
+                "run_id": s["run_id"],
+                "order_id": order.order_id if order else None,
+                "question": "O release ficou incerto. Confira o sistema externo.",
+                "options": list(OPERATOR_DECISIONS),
+            }
+        )
+        # Decisão do operador, não do agente: nenhuma chamada nova é feita aqui.
+        if decision == "released":
+            evidence = f"confirmado pelo operador ({s['context'].actor})"
+            return stop(Outcome.RELEASED, released=True, evidence=evidence)
+        if decision == "not_released":
+            return stop(Outcome.RELEASE_FAILED, detail="operador confirmou que não houve liberação")
+        return stop(Outcome.UNKNOWN, detail=f"decisão do operador não reconhecida: {decision!r}")

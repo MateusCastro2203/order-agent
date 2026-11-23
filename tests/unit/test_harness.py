@@ -1,7 +1,5 @@
 """Testes do harness e do grafo: limites, roteamento, falhas e montagem da resposta."""
 
-import threading
-
 import pytest
 
 from order_agent.graph import (
@@ -170,8 +168,7 @@ def test_planner_malformado_duas_vezes_encerra():
     assert system.calls == []
 
 
-def test_timeout_do_planner_encerra():
-    gate = threading.Event()
+def test_timeout_do_planner_encerra(gate):
 
     class SlowPlanner:
         def next_step(self, _):
