@@ -5,11 +5,14 @@ As funções `route_*` são puras sobre o state e testáveis sem o LangGraph.
 
 from __future__ import annotations
 
+import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from order_agent import logs
 from order_agent.finalize import build_result
 from order_agent.harness import AgentState, Harness, initial_state
 from order_agent.models import RunContext, RunResult
@@ -37,14 +40,26 @@ def route_after_reconcile(s: AgentState) -> str:
     return "finalize" if s.get("outcome") else "escalate"
 
 
+def traced(name: str, node: Callable[[AgentState], dict[str, Any]]):
+    """Envolve um node para emitir um evento JSON com o que ele mudou."""
+
+    def wrapper(state: AgentState) -> dict[str, Any]:
+        started = time.perf_counter()
+        update = node(state)
+        logs.node_event(name, state, update, started)
+        return update
+
+    return wrapper
+
+
 def build_graph(harness: Harness, checkpointer: Any = None):
     graph = StateGraph(AgentState)
-    graph.add_node("plan", harness.node_plan)
-    graph.add_node("validate", harness.node_validate)
-    graph.add_node("execute", harness.node_execute)
-    graph.add_node("reconcile", harness.node_reconcile)
-    graph.add_node("escalate", harness.node_escalate)
-    graph.add_node("finalize", lambda s: {"result": build_result(s)})
+    graph.add_node("plan", traced("plan", harness.node_plan))
+    graph.add_node("validate", traced("validate", harness.node_validate))
+    graph.add_node("execute", traced("execute", harness.node_execute))
+    graph.add_node("reconcile", traced("reconcile", harness.node_reconcile))
+    graph.add_node("escalate", traced("escalate", harness.node_escalate))
+    graph.add_node("finalize", traced("finalize", lambda s: {"result": build_result(s)}))
 
     graph.add_edge(START, "plan")
     graph.add_conditional_edges("plan", route_after_plan, ["finalize", "validate", "plan"])

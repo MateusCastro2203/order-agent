@@ -198,3 +198,22 @@ def test_resposta_de_falha_nunca_afirma_liberacao(outcome_steps):
     result = run(harness, RELEASE_REQUEST, OPERATOR)
     assert not result.released
     assert "Nenhuma liberação foi feita" in result.message
+
+
+def test_encerrar_sem_concluir_recebe_uma_correcao():
+    # O "modelo" para depois das leituras (ex.: diz que liberou, sem chamar a tool).
+    script = release_script(fixtures.HAPPY)
+    steps = [script[0], script[1], finish(), script[2], finish()]
+    harness, system = agent(steps)
+    result = run(harness, RELEASE_REQUEST, OPERATOR)
+    assert "texto não executa ações" in harness.planner.inputs[3].feedback
+    assert result.outcome is Outcome.RELEASED
+    assert system.release_effects == 1
+
+
+def test_encerrar_sem_concluir_duas_vezes_e_no_progress():
+    script = release_script(fixtures.HAPPY)
+    harness, system = agent([script[0], script[1], finish(), finish()])
+    result = run(harness, RELEASE_REQUEST, OPERATOR)
+    assert (result.outcome, result.reason) == (Outcome.ABORTED, Reason.NO_PROGRESS)
+    assert system.release_effects == 0

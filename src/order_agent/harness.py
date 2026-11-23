@@ -178,7 +178,15 @@ class Harness:
         if intent is Intent.OUT_OF_SCOPE:
             return {**update, **stop(Outcome.INVALID_REQUEST, Reason.OUT_OF_SCOPE)}
         if step.action == "finish":
-            return {**update, **self._finish(s, intent)}
+            finished = self._finish(s, intent)
+            if finished.get("reason") is Reason.NO_PROGRESS:
+                # Encerrou sem concluir (ex.: o modelo "disse" que liberou, sem chamar a tool).
+                # Texto não executa ação: uma chance de corrigir, dentro do mesmo limite.
+                why = "você encerrou sem concluir; texto não executa ações, só ferramentas"
+                retry = self._planner_error(s, iterations, why)
+                if retry.get("outcome") is None:
+                    return {**update, **retry}
+            return {**update, **finished}
         return {**update, "proposed": step.tool_call}
 
     def _planner_error(self, s: AgentState, iterations: int, detail: str) -> dict[str, Any]:
