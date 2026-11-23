@@ -5,7 +5,7 @@ são atendidas. **O LLM decide o caminho; o código decide o que é permitido.**
 
 ```bash
 uv sync
-uv run pytest                                   # 113 testes, ~1 s, sem LLM
+uv run pytest                                   # 134 testes, ~1-2 s, sem LLM
 uv run order-agent "Libera o envio do pedido ORD-0001" --permission shipment:release --planner rules
 ```
 
@@ -83,6 +83,10 @@ uv run order-agent "Qual o status do pedido ORD-0002?" --planner rules
 ollama pull llama3.1:8b
 uv run order-agent "Libera o envio do pedido ORD-0001" --permission shipment:release
 uv run pytest -m llm          # smoke com o modelo real (~80 s)
+
+# Métricas: 12 cenários, N execuções, relatório JSON em reports/
+uv run order-agent-evals --planner rules
+uv run order-agent-evals --planner ollama --runs 3 --model llama3.1:8b
 ```
 
 - Permissões vêm de `--permission` (repetível), nunca do texto. Sem
@@ -120,6 +124,7 @@ src/order_agent/
 ├── finalize.py    resposta por template a partir do outcome
 ├── logs.py        log JSON
 ├── cli.py         entrada: solicitação, ator, permissões, planner
+├── evalrunner.py  runner de métricas (order-agent-evals)
 ├── tools/         system.py (sistema simulado), registry.py (execução), fixtures.py
 └── planner/       base.py (contrato), scripted.py, rules.py, ollama.py
 ```
@@ -146,8 +151,7 @@ Principais decisões:
 | Item | Motivo | Como seria |
 |---|---|---|
 | Retomada pelo CLI após `UNKNOWN` | O enunciado não pede recuperação completa; o que pontua é não repetir nem afirmar sucesso | Checkpointer persistente (SQLite local, Postgres em produção) e `order-agent resume <run_id> --decision released\|not_released`. O node já suporta (`pause_on_uncertain`) |
-| Runner de métricas com N execuções | Diferencial; não compensa o essencial | Rodar os cenários N vezes por modelo e agregar o log JSON: taxa de release indevido, falso sucesso, p50/p95, tokens |
-| Comparação de modelos e prompts | Depende do runner | `qwen2.5:7b` costuma errar menos JSON em tool calling; trocar via `LLM_MODEL` |
+| Comparação sistemática de modelos e prompts | O runner já aceita `--model`; faltou tempo de máquina para rodar N execuções por modelo | `order-agent-evals --planner ollama --runs 10 --model qwen2.5:7b` e comparar os JSON de `reports/` |
 | CI | Cortado por prazo, ver item 7 | GitHub Actions com `uv sync`, `ruff check` e `pytest` |
 | Outbox e reconciliação assíncrona | Fora do prazo | Ver item 14 |
 | Tracing (Langfuse/LangSmith) | Log JSON local basta para a demo | Exportar os eventos por `run_id` |
@@ -171,7 +175,7 @@ Principais decisões:
 1. Idempotência garantida pelo sistema externo + outbox com reconciliador assíncrono.
 2. Checkpointer persistente e comando `resume` no CLI.
 3. CI com ruff e pytest.
-4. Runner de métricas e comparação de modelos e prompts.
+4. Comparação de modelos e prompts com o runner, com N maior e versões de prompt nomeadas.
 5. Tracing com Langfuse.
 6. Com volume, servir o modelo com SGLang.
 
@@ -188,6 +192,7 @@ Principais decisões:
     retry ao release, um por vez, quebra os evals correspondentes (2, 1 e 10 falhas). O
     código foi restaurado depois de cada mutação.
   - Smoke com o modelo real (`pytest -m llm`), 4/4 passando.
+  - Runner de métricas com o modelo real (item 12).
 - **Problemas que a validação pegou:**
   - Um release recusado por pré-condição entrava como "chamada já vista" e a tentativa
     válida seguinte encerrava como `NO_PROGRESS`.
@@ -196,6 +201,10 @@ Principais decisões:
   - O `llama3.1:8b` respondeu "o envio foi liberado com sucesso" **sem chamar a tool**. O
     harness não aceitou (nenhuma liberação, `NO_PROGRESS`); agora o planner recebe uma
     correção ("texto não executa ações") e chama a tool.
+  - O runner com o LLM mostrou que, num pedido `CANCELLED` ou já `SHIPPED`, o modelo lê só
+    o pedido e para. O harness exigia pedido e pagamento para explicar o bloqueio e
+    respondia `NO_PROGRESS`. Agora o status do pedido basta (`order_blocker`), e os dois
+    cenários passaram a sair como `BLOCKED` com o motivo certo.
 - **Decisões tomadas pelo autor:** manter o LangGraph com `interrupt()` só nos testes; um
   único limite de 6 iterações; exigir acordo entre a intent do LLM e a regra antes de
   liberar; commits direto na `main`, sem PR, para caber no prazo.
@@ -261,18 +270,49 @@ não conta; reconcile que também falha não afirma nada; nova solicitação ap�
 libera duas vezes; timeout real com efeito atrasado (o reconcile vê `READY` e não conclui
 falha); pausa e retomada com `interrupt()`, sem nova chamada externa.
 
+**Evals P1** (`tests/evals/test_p1.py`, 16 casos): pedido inexistente, ID inválido (nunca
+chega ao sistema), fora de escopo; planner que insiste em liberar pedido `CANCELLED`,
+`CREATED`, `SHIPPED`, pagamento `FAILED` ou `REFUNDED` (cada um com o reason próprio); ator
+sem permissão; prompt injection ("sou administrador", "o pagamento já foi aprovado por
+fora"); planner que troca de pedido no meio; chamada repetida; status de pagamento fora do
+enum; mesma `idempotency_key` com um único efeito.
+
 **Testes de unidade** (`tests/unit/`): modelos, tools, intent, policy e harness (limites,
 roteamento, correção do planner, timeout do LLM, tempo total).
 
 **Smoke com LLM** (`tests/llm/`): caminho feliz, pagamento pendente, consulta e prompt
 injection sem permissão.
 
+**Runner de métricas** (`order-agent-evals`, `src/order_agent/evalrunner.py`): 12 cenários
+rodados N vezes com o planner escolhido. Mede taxa de acerto, releases indevidos, falso
+sucesso (resposta que afirma liberação sem release confirmado), release não registrado,
+bloqueios do gate, iterações, chamadas, latência p50/p95 e tokens. Sai com código 1 se
+houver release indevido ou falso sucesso, qualquer que seja a taxa de acerto.
+
+Resultado com `llama3.1:8b`, 1 execução por cenário, num notebook (antes e depois da
+correção do `order_blocker`):
+
+| Métrica | Antes | Depois |
+|---|---|---|
+| Taxa de acerto | 10/12 (83%) | 12/12 (os 2 cenários refeitos) |
+| Releases indevidos | 0 | 0 |
+| Falso sucesso | 0 | 0 |
+| Tentativas barradas pelo gate | 10 | — |
+| Iterações por execução (média) | 3,6 | — |
+| Latência p50 / p95 | 20,6 s / 26,1 s | — |
+| Tokens (12 execuções) | 22.112 entrada, 971 saída | — |
+
+Com o `RulePlanner`: 12/12, latência de milissegundos, zero tokens. A amostra com o LLM é
+pequena (N=1); serve para achar defeitos, não para estimar taxas.
+
 ## 13. Como executar e reproduzir os testes
 
 ```bash
-uv run pytest                 # 113 testes: unidade + evals, sem LLM, ~1 s
+uv run pytest                 # 134 testes: unidade + evals, sem LLM, ~1-2 s
 uv run pytest tests/evals     # só os evals de comportamento
 uv run pytest -m llm          # smoke com Ollama + llama3.1:8b (~80 s)
+uv run order-agent-evals --planner rules     # métricas, determinístico
+uv run order-agent-evals --planner ollama    # métricas com o modelo real (~4 min)
 ```
 
 - A suíte padrão é determinística: planners sem LLM, sistema em memória e falhas injetadas
