@@ -17,10 +17,39 @@ O agente recebe uma solicitação em linguagem natural ("Libera o envio do pedid
 decide quais ferramentas chamar e devolve uma resposta baseada **só no que as ferramentas
 retornaram**.
 
-```
-solicitação ─► plan (LLM) ─► validate ─► execute ─► plan … ─► finalize ─► resposta
-                               │  gate      │ timeout/5xx no release
-                               └► finalize  └► reconcile ─► escalate (UNKNOWN)
+```mermaid
+flowchart LR
+    subgraph LLM["Planner (LLM)"]
+        plan["plan<br/>intent + próxima tool"]
+    end
+
+    subgraph H["Harness determinístico"]
+        validate{{"validate<br/>schema + policy gate"}}
+        execute["execute<br/>timeout, retry em leitura"]
+        reconcile["reconcile<br/>relê get_order"]
+        escalate["escalate<br/>UNKNOWN"]
+        finalize["finalize<br/>template por outcome"]
+    end
+
+    req([Solicitação<br/>texto + RunContext]) --> plan
+    plan -- tool call --> validate
+    plan -- "fim ou limite" --> finalize
+    validate -- aprovado --> execute
+    validate -- bloqueado --> finalize
+    execute -. resultado .-> plan
+    execute -- "liberado ou 4xx" --> finalize
+    execute -- "timeout ou 5xx" --> reconcile
+    reconcile -- SHIPPED --> finalize
+    reconcile -- "sem confirmação" --> escalate
+    escalate --> finalize
+    finalize --> resp([Resposta<br/>só o que as tools confirmaram])
+
+    classDef llm fill:#ede9fe,stroke:#7c3aed,color:#1f1147
+    classDef gate fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef warn fill:#ffedd5,stroke:#ea580c,color:#431407
+    class plan llm
+    class validate gate
+    class reconcile,escalate warn
 ```
 
 - `plan` é o **único** node que chama o LLM: ele propõe a intent e a próxima tool call.
