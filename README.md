@@ -152,7 +152,6 @@ Principais decisões:
 |---|---|---|
 | Retomada pelo CLI após `UNKNOWN` | O enunciado não pede recuperação completa; o que pontua é não repetir nem afirmar sucesso | Checkpointer persistente (SQLite local, Postgres em produção) e `order-agent resume <run_id> --decision released\|not_released`. O node já suporta (`pause_on_uncertain`) |
 | Comparação sistemática de modelos e prompts | O runner já aceita `--model`; faltou tempo de máquina para rodar N execuções por modelo | `order-agent-evals --planner ollama --runs 10 --model qwen2.5:7b` e comparar os JSON de `reports/` |
-| CI | Cortado por prazo, ver item 7 | GitHub Actions com `uv sync`, `ruff check` e `pytest` |
 | Outbox e reconciliação assíncrona | Fora do prazo | Ver item 14 |
 | Tracing (Langfuse/LangSmith) | Log JSON local basta para a demo | Exportar os eventos por `run_id` |
 | SGLang | Proposta, ver item 2 | — |
@@ -174,10 +173,9 @@ Principais decisões:
 
 1. Idempotência garantida pelo sistema externo + outbox com reconciliador assíncrono.
 2. Checkpointer persistente e comando `resume` no CLI.
-3. CI com ruff e pytest.
-4. Comparação de modelos e prompts com o runner, com N maior e versões de prompt nomeadas.
-5. Tracing com Langfuse.
-6. Com volume, servir o modelo com SGLang.
+3. Comparação de modelos e prompts com o runner, com N maior e versões de prompt nomeadas.
+4. Tracing com Langfuse.
+5. Com volume, servir o modelo com SGLang.
 
 ## 8. Ferramentas de IA e validação do código
 
@@ -187,7 +185,8 @@ Principais decisões:
   anteriores, avaliou o plano como avaliador do desafio. Os cortes de escopo vieram dessa
   revisão (sem resume no CLI, um único budget, menos outcomes).
 - **Validação:**
-  - Todo commit passa por `ruff` e pela suíte completa.
+  - Todo commit passa por `ruff` e pela suíte completa, localmente e no CI (GitHub Actions:
+    lint, testes e o runner com o planner por regras, que falha com release indevido).
   - **Testes de mutação manuais:** desligar o gate, remover a checagem de intent e dar
     retry ao release, um por vez, quebra os evals correspondentes (2, 1 e 10 falhas). O
     código foi restaurado depois de cada mutação.
@@ -290,21 +289,27 @@ sucesso (resposta que afirma liberação sem release confirmado), release não r
 bloqueios do gate, iterações, chamadas, latência p50/p95 e tokens. Sai com código 1 se
 houver release indevido ou falso sucesso, qualquer que seja a taxa de acerto.
 
-Resultado com `llama3.1:8b`, 1 execução por cenário, num notebook (antes e depois da
-correção do `order_blocker`):
+Resultado com `llama3.1:8b`, 3 execuções por cenário (36 no total), num notebook:
 
-| Métrica | Antes | Depois |
-|---|---|---|
-| Taxa de acerto | 10/12 (83%) | 12/12 (os 2 cenários refeitos) |
-| Releases indevidos | 0 | 0 |
-| Falso sucesso | 0 | 0 |
-| Tentativas barradas pelo gate | 10 | — |
-| Iterações por execução (média) | 3,6 | — |
-| Latência p50 / p95 | 20,6 s / 26,1 s | — |
-| Tokens (12 execuções) | 22.112 entrada, 971 saída | — |
+| Métrica | Valor |
+|---|---|
+| Taxa de acerto | 36/36 |
+| Releases indevidos | 0 |
+| Falso sucesso | 0 |
+| Release não registrado | 0 |
+| Tentativas de release barradas pelo gate | 30 |
+| Iterações por execução (média) | 3,4 |
+| Latência p50 / p95 | 19,4 s / 25,5 s |
+| Tokens (36 execuções) | 62.445 de entrada, 2.793 de saída |
 
-Com o `RulePlanner`: 12/12, latência de milissegundos, zero tokens. A amostra com o LLM é
-pequena (N=1); serve para achar defeitos, não para estimar taxas.
+O número que mais importa é o de tentativas barradas: em cenários que deveriam bloquear
+(pagamento pendente, sem permissão, prompt injection), o modelo tentou chamar
+`release_shipment` 30 vezes, e o gate recusou todas antes de chegar ao sistema externo. Sem a
+camada determinística, a taxa de acerto do agente dependeria do modelo obedecer ao prompt.
+
+A primeira rodada (N=1) achou o defeito do `order_blocker` descrito no item 8: 10/12 de
+acerto antes da correção. Com o `RulePlanner`: 12/12, latência de milissegundos, zero tokens.
+N=3 ainda é pouco para estimar taxas com precisão; o runner aceita `--runs` maior.
 
 ## 13. Como executar e reproduzir os testes
 
