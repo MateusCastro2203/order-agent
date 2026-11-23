@@ -1,0 +1,41 @@
+[project]
+name = "order-agent"
+version = "0.1.0"
+description = "Agente de operações de pedidos com harness determinístico em volta de um planner LLM."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "langgraph>=0.2",
+    "pydantic>=2.7",
+]
+
+[project.scripts]
+order-agent = "order_agent.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/order_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not llm' --strict-markers"
+markers = [
+    "llm: smoke com modelo real via Ollama (rodar com: uv run pytest -m llm)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
