@@ -210,9 +210,9 @@ Principais decisões:
 
 ## 9. Tempo dedicado
 
-Implementação: **17:15 às 18:35, cerca de 1h20**, medido pelos commits (o primeiro marca
-o início do relógio). O núcleo e o README ficaram prontos às 18:10; os evals P1 e o runner
-de métricas vieram depois. O planejamento (documento de arquitetura, decisões e revisão do plano)
+Implementação: **17:15 às 18:50, cerca de 1h35**, medido pelos commits (o primeiro marca
+o início do relógio). O núcleo e o README ficaram prontos às 18:10; os evals P1, o runner
+de métricas e o CI vieram depois. O planejamento (documento de arquitetura, decisões e revisão do plano)
 foi feito antes do início da contagem.
 
 ## 10. Como o harness controla a execução e limita iterações
