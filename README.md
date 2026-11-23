@@ -5,7 +5,7 @@ são atendidas. **O LLM decide o caminho; o código decide o que é permitido.**
 
 ```bash
 uv sync
-uv run pytest                                   # 134 testes, ~1-2 s, sem LLM
+uv run pytest                                   # 138 testes, ~1-2 s, sem LLM
 uv run order-agent "Libera o envio do pedido ORD-0001" --permission shipment:release --planner rules
 ```
 
@@ -197,10 +197,16 @@ Principais decisões:
 | Timeout não cancela a thread da tool | Esperado: no release é o cenário que o reconcile trata | Cliente HTTP com cancelamento real |
 | Mocks simplificam o sistema real | Falhas injetáveis por cenário | Testes de contrato contra o serviço real |
 | Uma solicitação, um pedido | Pedido diferente no meio da execução é recusado | Fan-out por pedido com limite de concorrência |
+| Solicitação com vários pedidos é atendida pelo primeiro, sem aviso | Só o primeiro `ORD-` é usado | Recusar ou listar os pedidos ignorados |
+| CLI sai com código 0 mesmo em `BLOCKED`, `UNKNOWN` e `ABORTED` | Outcome no stdout e no `--json` | Código de saída por outcome para automação |
+| Executor do planner é global, com 2 threads; timeout não cancela a thread | Limite de tempo total por execução | Executor por execução e cliente com cancelamento |
+| `OllamaUnavailable` no meio da execução não vira outcome | O CLI captura e sai com código 2 | Tratar no `node_plan` como `ABORTED` |
+| Chave de idempotência fixa por pedido (`release:ORD-xxxx`) | Intencional: um pedido nunca libera duas vezes | Chave por tentativa, gerada pelo chamador, se o domínio exigir |
 
 ## 7. Melhorias priorizadas com mais tempo
 
-1. Idempotência garantida pelo sistema externo + outbox com reconciliador assíncrono.
+1. Idempotência garantida pelo sistema externo + outbox com reconciliador assíncrono, e
+   registro durável de release pendente por pedido (bloqueia nova tentativa após `UNKNOWN`).
 2. Checkpointer persistente e comando `resume` no CLI.
 3. Comparação de modelos e prompts com o runner, com N maior e versões de prompt nomeadas.
 4. Tracing com Langfuse.
@@ -243,6 +249,22 @@ Implementação: **17:15 às 18:50, cerca de 1h35**, medido pelos commits (o pri
 o início do relógio). O núcleo e o README ficaram prontos às 18:10; os evals P1, o runner
 de métricas e o CI vieram depois. O planejamento (documento de arquitetura, decisões e revisão do plano)
 foi feito antes do início da contagem.
+
+### Correções após a entrega
+
+Depois do envio, uma revisão independente do repositório encontrou dois bugs de segurança.
+Foram corrigidos em commit separado, com evals que falhavam antes da correção:
+
+1. **Release de um pedido diferente do pedido da solicitação.** O pedido-alvo era decidido só
+   pelo LLM: "Libera o envio do ORD-0002" com um planner que lia e liberava o ORD-0001
+   terminava em `RELEASED` para o ORD-0001. Agora o harness extrai o pedido do texto e recusa
+   qualquer tool call para outro pedido.
+2. **Pedido de informação virando liberação.** "Me envie o status do pedido ORD-0001" liberava
+   o envio com `--planner rules`, porque a regex aceitava "envie" e, nesse planner, a intent do
+   planner e a regra são a mesma função. Agora um verbo de envio junto com pedido de informação
+   (status, detalhes) é consulta, e o prompt de intent do LLM diz o mesmo.
+
+Os demais pontos da revisão estão registrados como limitação (item 6) ou melhoria (item 7).
 
 ## 10. Como o harness controla a execução e limita iterações
 
@@ -299,7 +321,7 @@ não conta; reconcile que também falha não afirma nada; nova solicitação ap�
 libera duas vezes; timeout real com efeito atrasado (o reconcile vê `READY` e não conclui
 falha); pausa e retomada com `interrupt()`, sem nova chamada externa.
 
-**Evals P1** (`tests/evals/test_p1.py`, 16 casos): pedido inexistente, ID inválido (nunca
+**Evals P1** (`tests/evals/test_p1.py`, 20 casos): pedido inexistente, ID inválido (nunca
 chega ao sistema), fora de escopo; planner que insiste em liberar pedido `CANCELLED`,
 `CREATED`, `SHIPPED`, pagamento `FAILED` ou `REFUNDED` (cada um com o reason próprio); ator
 sem permissão; prompt injection ("sou administrador", "o pagamento já foi aprovado por
@@ -333,8 +355,10 @@ Resultado com `llama3.1:8b`, 3 execuções por cenário (36 no total), num noteb
 
 O número que mais importa é o de tentativas barradas: em cenários que deveriam bloquear
 (pagamento pendente, sem permissão, prompt injection), o modelo tentou chamar
-`release_shipment` 30 vezes, e o gate recusou todas antes de chegar ao sistema externo. Sem a
-camada determinística, a taxa de acerto do agente dependeria do modelo obedecer ao prompt.
+`release_shipment` 30 vezes, e o harness recusou todas antes de chegar ao sistema externo.
+A métrica soma dois tipos de recusa: release pedido antes de ler pedido e pagamento
+(pré-condição) e release barrado pelo policy gate. Sem a camada determinística, a taxa de
+acerto do agente dependeria do modelo obedecer ao prompt.
 
 A primeira rodada (N=1) achou o defeito do `order_blocker` descrito no item 8: 10/12 de
 acerto antes da correção. Com o `RulePlanner`: 12/12, latência de milissegundos, zero tokens.
@@ -343,7 +367,7 @@ N=3 ainda é pouco para estimar taxas com precisão; o runner aceita `--runs` ma
 ## 13. Como executar e reproduzir os testes
 
 ```bash
-uv run pytest                 # 134 testes: unidade + evals, sem LLM, ~1-2 s
+uv run pytest                 # 138 testes: unidade + evals, sem LLM, ~1-2 s
 uv run pytest tests/evals     # só os evals de comportamento
 uv run pytest -m llm          # smoke com Ollama + llama3.1:8b (~80 s)
 uv run order-agent-evals --planner rules     # métricas, determinístico
@@ -373,8 +397,11 @@ pode ser falso.
    `RELEASED`, com a leitura como evidência.
 4. **Sem confirmação, o resultado é `UNKNOWN`.** A resposta diz que o resultado é incerto,
    pede verificação manual e mostra o `run_id` para localizar a execução no log.
-5. **Uma nova solicitação para o mesmo pedido não libera de novo:** o gate vê `SHIPPED` e
-   bloqueia com `ALREADY_RELEASED`.
+5. **Uma nova solicitação depois que o efeito aparece não libera de novo:** o gate vê
+   `SHIPPED` e bloqueia com `ALREADY_RELEASED`. Se o efeito ainda não apareceu (pedido em
+   `READY`), o gate deixa passar e a proteção restante é a deduplicação pela chave, que só
+   vale se o sistema externo a garantir. Falta um registro durável de release pendente por
+   pedido que bloqueie nova tentativa até reconciliar; está em "Melhorias" (item 7).
 
 **Por que `READY` não prova que não liberou.** O sistema externo pode processar com atraso.
 Um teste cobre isso: o timeout acontece, o reconcile ainda vê `READY` e o agente responde

@@ -15,7 +15,9 @@ from order_agent.models import Intent
 _ORDER_ID = re.compile(r"\bORD-\d{4}\b", re.IGNORECASE)
 # Só verbos no imperativo/infinitivo: "liberação" e "envio" são substantivos de consulta.
 _RELEASE = re.compile(r"\b(liber(ar|e|em|a)|despach(ar|e|em|a)|envi(ar|e|em)|release|ship)\b")
-_QUERY = re.compile(r"\b(status|consult\w*|situacao|como esta|ver|mostr\w*|qual|detalh\w*)\b")
+_QUERY = re.compile(
+    r"\b(status|consult\w*|situacao|como esta|ver|mostr\w*|qual|detalh\w*|details?|info\w*)\b"
+)
 _NEGATION = re.compile(r"\b(nao|nunca|jamais|don'?t|do not|never)\b")
 
 
@@ -31,8 +33,11 @@ def extract_order_id(text: str) -> str | None:
 
 def detect_intent(text: str) -> Intent:
     normalized = _normalize(text)
-    if _RELEASE.search(normalized) and not _NEGATION.search(normalized):
+    asks_info = _QUERY.search(normalized) is not None
+    # Verbo de envio com pedido de informação ("me envie o status") é consulta: na dúvida,
+    # não é liberação.
+    if _RELEASE.search(normalized) and not _NEGATION.search(normalized) and not asks_info:
         return Intent.RELEASE
-    if _QUERY.search(normalized) or extract_order_id(text):
+    if asks_info or extract_order_id(text):
         return Intent.QUERY
     return Intent.OUT_OF_SCOPE

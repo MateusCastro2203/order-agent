@@ -19,7 +19,7 @@ from typing import Any, TypedDict
 from langgraph.types import interrupt
 from pydantic import ValidationError
 
-from order_agent.intent import detect_intent
+from order_agent.intent import detect_intent, extract_order_id
 from order_agent.models import (
     Intent,
     Order,
@@ -80,6 +80,7 @@ class AgentState(TypedDict, total=False):
     context: RunContext
     started: float
     rule_intent: Intent
+    request_order_id: str | None
     intent: Intent | None
     order: Order | None
     payment: Payment | None
@@ -108,6 +109,7 @@ def initial_state(run_id: str, request: str, context: RunContext, now: float) ->
         context=context,
         started=now,
         rule_intent=detect_intent(request),
+        request_order_id=extract_order_id(request),
         intent=None,
         order=None,
         payment=None,
@@ -245,6 +247,11 @@ class Harness:
         order, payment = s["order"], s["payment"]
         # Recusas de pré-condição não entram em `seen`: a mesma chamada pode ser válida depois
         # que a pré-condição for atendida. Um loop de recusas esbarra no limite de iterações.
+        # O pedido-alvo vem do texto, não do LLM: uma tool call para outro pedido é recusada.
+        target = s.get("request_order_id")
+        if target and args.order_id != target:
+            why = f"use o pedido da solicitação: {target}"
+            return self._refuse(s, call, s["seen"], why)
         if order and args.order_id != order.order_id:
             return self._refuse(s, call, s["seen"], "uma solicitação trata um único pedido")
 

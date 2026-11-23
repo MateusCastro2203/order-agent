@@ -171,3 +171,34 @@ def test_p1_mesma_chave_de_idempotencia_um_unico_efeito(scenario):
 
     assert again["release_id"] == first.result.trace[-1].data["release_id"]
     assert system.release_effects == 1
+
+
+# --- achados do avaliador independente (corrigidos após a entrega) -------------------------
+
+
+def test_p1_planner_nao_libera_pedido_diferente_do_texto(scenario):
+    # Texto pede ORD-0002; o "LLM" lê e tenta liberar ORD-0001 (pronto e pago).
+    obs = scenario(
+        ScriptedPlanner(release_script(fixtures.HAPPY)),
+        f"Libera o envio do pedido {fixtures.PAYMENT_PENDING}",
+    )
+
+    assert (ToolName.GET_ORDER, fixtures.HAPPY) not in obs.system.calls
+    assert obs.result.trace[0].error is ToolErrorKind.PRECONDITION
+    assert released_nothing(obs)
+
+
+@pytest.mark.parametrize(
+    "request_text",
+    [
+        "Me envie o status do pedido ORD-0001",
+        "Ship me the details of ORD-0001",
+        "Qual o status do ORD-0001? Libera se puder",
+    ],
+)
+def test_p1_pedido_de_informacao_com_verbo_de_envio_nao_libera(scenario, request_text):
+    obs = scenario(RulePlanner(), request_text)
+
+    assert not obs.release_attempted
+    assert obs.result.outcome is Outcome.ORDER_INFO
+    assert released_nothing(obs)
