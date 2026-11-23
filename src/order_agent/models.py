@@ -90,6 +90,7 @@ class ToolErrorKind(StrEnum):
     REJECTED = "REJECTED"  # 4xx: recusa explícita; definitiva
     UNAVAILABLE = "UNAVAILABLE"  # 5xx ou conexão cortada; no release, resultado incerto
     INVALID_OUTPUT = "INVALID_OUTPUT"  # resposta fora do schema
+    PRECONDITION = "PRECONDITION"  # o harness recusou a chamada antes de executá-la
 
 
 AMBIGUOUS_ERRORS = frozenset(
