@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Instalar dependências
+        run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      # Suíte padrão: sem LLM e sem rede. O smoke com Ollama (-m llm) roda só localmente.
+      - name: Testes
+        run: uv run pytest -v
+
+      - name: Runner de métricas (planner por regras)
+        run: uv run order-agent-evals --planner rules
